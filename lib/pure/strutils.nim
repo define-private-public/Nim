@@ -115,7 +115,7 @@ const
   IdentStartChars* = {'a'..'z', 'A'..'Z', '_'}
     ## the set of characters an identifier can start with
 
-  NewLines* = {'\13', '\10'}
+  Newlines* = {'\13', '\10'}
     ## the set of characters a newline terminator can start with (carriage
     ## return, line feed)
 
@@ -1494,8 +1494,11 @@ proc delete*(s: var string, first, last: int) {.noSideEffect,
     a.delete(1, 6)
     doAssert a == "ara"
 
+    a.delete(2, 999)
+    doAssert a == "ar"
+
   var i = first
-  var j = last+1
+  var j = min(len(s), last+1)
   var newLen = len(s)-j+i
   while i < newLen:
     s[i] = s[j]
@@ -2357,7 +2360,7 @@ proc formatBiggestFloat*(f: BiggestFloat, format: FloatFormatMode = ffDefault,
     for i in 0 ..< L:
       # Depending on the locale either dot or comma is produced,
       # but nothing else is possible:
-      if buf[i] in {'.', ','}: result[i] = decimalsep
+      if buf[i] in {'.', ','}: result[i] = decimalSep
       else: result[i] = buf[i]
     when defined(windows):
       # VS pre 2015 violates the C standard: "The exponent always contains at
@@ -2444,7 +2447,7 @@ proc formatSize*(bytes: int64,
   var
     xb: int64 = bytes
     fbytes: float
-    last_xb: int64 = bytes
+    lastXb: int64 = bytes
     matchedIndex: int
     prefixes: array[9, string]
   if prefix == bpColloquial:
@@ -2455,11 +2458,11 @@ proc formatSize*(bytes: int64,
   # Iterate through prefixes seeing if value will be greater than
   # 0 in each case
   for index in 1..<prefixes.len:
-    last_xb = xb
+    lastXb = xb
     xb = bytes div (1'i64 shl (index*10))
     matchedIndex = index
     if xb == 0:
-      xb = last_xb
+      xb = lastXb
       matchedIndex = index - 1
       break
   # xb has the integer number for the latest value; index should be correct
@@ -2856,8 +2859,6 @@ iterator tokenize*(s: string, seps: set[char] = Whitespace): tuple[
 proc editDistance*(a, b: string): int {.noSideEffect,
   rtl, extern: "nsuEditDistance",
   deprecated: "use editdistance.editDistanceAscii instead".} =
-  ## **Deprecated**: Use `editdistance module<editdistance.html>`_
-  ##
   ## Returns the edit distance between `a` and `b`.
   ##
   ## This uses the `Levenshtein`:idx: distance algorithm with only a linear
@@ -2901,7 +2902,7 @@ proc editDistance*(a, b: string): int {.noSideEffect,
   for i in 1 .. len1 - 1:
     var char1 = a[i + s - 1]
     var char2p: int
-    var D, x: int
+    var diff, x: int
     var p: int
     if i >= len1 - half:
       # skip the upper triangle:
@@ -2912,33 +2913,33 @@ proc editDistance*(a, b: string): int {.noSideEffect,
       inc(p)
       inc(char2p)
       x = row[p] + 1
-      D = x
+      diff = x
       if x > c3: x = c3
       row[p] = x
       inc(p)
     else:
       p = 1
       char2p = 0
-      D = i
+      diff = i
       x = i
     if i <= half + 1:
       # skip the lower triangle:
       e = len2 + i - half - 2
     # main:
     while p <= e:
-      dec(D)
-      var c3 = D + ord(char1 != b[char2p + s])
+      dec(diff)
+      var c3 = diff + ord(char1 != b[char2p + s])
       inc(char2p)
       inc(x)
       if x > c3: x = c3
-      D = row[p] + 1
-      if x > D: x = D
+      diff = row[p] + 1
+      if x > diff: x = diff
       row[p] = x
       inc(p)
     # lower triangle sentinel:
     if i <= half:
-      dec(D)
-      var c3 = D + ord(char1 != b[char2p + s])
+      dec(diff)
+      var c3 = diff + ord(char1 != b[char2p + s])
       inc(x)
       if x > c3: x = c3
       row[p] = x
@@ -2948,8 +2949,6 @@ proc editDistance*(a, b: string): int {.noSideEffect,
 proc isNilOrEmpty*(s: string): bool {.noSideEffect, procvar, rtl,
                                       extern: "nsuIsNilOrEmpty",
                                       deprecated: "use 'x.len == 0' instead".} =
-  ## **Deprecated**: use 'x.len == 0'
-  ##
   ## Checks if `s` is nil or empty.
   result = len(s) == 0
 
@@ -2969,8 +2968,6 @@ template isImpl(call) =
 proc isAlphaAscii*(s: string): bool {.noSideEffect, procvar,
   rtl, extern: "nsuIsAlphaAsciiStr",
   deprecated: "Deprecated since version 0.20 since its semantics are unclear".} =
-  ## **Deprecated**: Deprecated since version 0.20 since its semantics are unclear
-  ##
   ## Checks whether or not `s` is alphabetical.
   ##
   ## This checks a-z, A-Z ASCII characters only.
@@ -2987,8 +2984,6 @@ proc isAlphaAscii*(s: string): bool {.noSideEffect, procvar,
 proc isAlphaNumeric*(s: string): bool {.noSideEffect, procvar,
   rtl, extern: "nsuIsAlphaNumericStr",
   deprecated: "Deprecated since version 0.20 since its semantics are unclear".} =
-  ## **Deprecated**: Deprecated since version 0.20 since its semantics are unclear
-  ##
   ## Checks whether or not `s` is alphanumeric.
   ##
   ## This checks a-z, A-Z, 0-9 ASCII characters only.
@@ -3005,8 +3000,6 @@ proc isAlphaNumeric*(s: string): bool {.noSideEffect, procvar,
 proc isDigit*(s: string): bool {.noSideEffect, procvar,
   rtl, extern: "nsuIsDigitStr",
   deprecated: "Deprecated since version 0.20 since its semantics are unclear".} =
-  ## **Deprecated**: Deprecated since version 0.20 since its semantics are unclear
-  ##
   ## Checks whether or not `s` is a numeric value.
   ##
   ## This checks 0-9 ASCII characters only.
@@ -3021,8 +3014,6 @@ proc isDigit*(s: string): bool {.noSideEffect, procvar,
 proc isSpaceAscii*(s: string): bool {.noSideEffect, procvar,
   rtl, extern: "nsuIsSpaceAsciiStr",
   deprecated: "Deprecated since version 0.20 since its semantics are unclear".} =
-  ## **Deprecated**: Deprecated since version 0.20 since its semantics are unclear
-  ##
   ## Checks whether or not `s` is completely whitespace.
   ##
   ## Returns true if all characters in `s` are whitespace
@@ -3049,8 +3040,6 @@ template isCaseImpl(s, charProc, skipNonAlpha) =
 
 proc isLowerAscii*(s: string, skipNonAlpha: bool): bool {.
   deprecated: "Deprecated since version 0.20 since its semantics are unclear".} =
-  ## **Deprecated**: Deprecated since version 0.20 since its semantics are unclear
-  ##
   ## Checks whether ``s`` is lower case.
   ##
   ## This checks ASCII characters only.
@@ -3073,8 +3062,6 @@ proc isLowerAscii*(s: string, skipNonAlpha: bool): bool {.
 
 proc isUpperAscii*(s: string, skipNonAlpha: bool): bool {.
   deprecated: "Deprecated since version 0.20 since its semantics are unclear".} =
-  ## **Deprecated**: Deprecated since version 0.20 since its semantics are unclear
-  ##
   ## Checks whether ``s`` is upper case.
   ##
   ## This checks ASCII characters only.
@@ -3101,8 +3088,6 @@ proc wordWrap*(s: string, maxLineWidth = 80,
                newLine = "\n"): string {.
                noSideEffect, rtl, extern: "nsuWordWrap",
                deprecated: "use wrapWords in std/wordwrap instead".} =
-  ## **Deprecated**: use wrapWords in std/wordwrap instead
-  ##
   ## Word wraps `s`.
   result = newStringOfCap(s.len + s.len shr 6)
   var spaceLeft = maxLineWidth

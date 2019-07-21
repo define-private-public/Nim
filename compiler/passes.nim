@@ -11,9 +11,9 @@
 ## `TPass` interface.
 
 import
-  strutils, options, ast, astalgo, llstream, msgs, platform, os,
-  condsyms, idents, renderer, types, extccomp, math, magicsys, nversion,
-  nimsets, syntaxes, times, idgen, modulegraphs, reorder, rod,
+  options, ast, llstream, msgs,
+  idents,
+  syntaxes, idgen, modulegraphs, reorder, rod,
   lineinfos, pathutils
 
 type
@@ -90,14 +90,13 @@ proc processTopLevelStmt(graph: ModuleGraph, n: PNode, a: var TPassContextArray)
 proc resolveMod(conf: ConfigRef; module, relativeTo: string): FileIndex =
   let fullPath = findModule(conf, module, relativeTo)
   if fullPath.isEmpty:
-    result = InvalidFileIDX
+    result = InvalidFileIdx
   else:
     result = fileInfoIdx(conf, fullPath)
 
 proc processImplicits(graph: ModuleGraph; implicits: seq[string], nodeKind: TNodeKind,
                       a: var TPassContextArray; m: PSym) =
   # XXX fixme this should actually be relative to the config file!
-  let gCmdLineInfo = newLineInfo(FileIndex(0), 1, 1)
   let relativeTo = toFullPath(graph.config, m.info)
   for module in items(implicits):
     # implicit imports should not lead to a module importing itself

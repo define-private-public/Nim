@@ -8,7 +8,7 @@
 #
 
 import
-  os, strutils, strtabs, osproc, sets, lineinfos, platform,
+  os, strutils, strtabs, sets, lineinfos, platform,
   prefixmatches, pathutils
 
 from terminal import isatty
@@ -25,8 +25,8 @@ type                          # please make sure we have under 32 options
                               # (improves code efficiency a lot!)
   TOption* = enum             # **keep binary compatible**
     optNone, optObjCheck, optFieldCheck, optRangeCheck, optBoundsCheck,
-    optOverflowCheck, optNilCheck,
-    optNaNCheck, optInfCheck, optMoveCheck,
+    optOverflowCheck, optNilCheck, optRefCheck,
+    optNaNCheck, optInfCheck, optStyleCheck,
     optAssert, optLineDir, optWarns, optHints,
     optOptimizeSpeed, optOptimizeSize, optStackTrace, # stack tracing support
     optLineTrace,             # line tracing support (includes stack tracing)
@@ -78,7 +78,7 @@ type                          # please make sure we have under 32 options
     optWholeProject           # for 'doc2': output any dependency
     optDocInternal            # generate documentation for non-exported symbols
     optMixedMode              # true if some module triggered C++ codegen
-    optListFullPaths          # use full paths in toMsgFilename, toFilename
+    optListFullPaths          # use full paths in toMsgFilename
     optNoNimblePath
     optHotCodeReloading
     optDynlibOverrideAll
@@ -149,7 +149,7 @@ type
   Cfile* = object
     nimname*: string
     cname*, obj*: AbsoluteFile
-    flags*: set[CFileFlag]
+    flags*: set[CfileFlag]
   CfileList* = seq[Cfile]
 
   Suggest* = ref object
@@ -229,6 +229,7 @@ type
     projectMainIdx*: FileIndex # the canonical path id of the main module
     command*: string # the main command (e.g. cc, check, scan, etc)
     commandArgs*: seq[string] # any arguments after the main command
+    commandLine*: string
     keepComments*: bool # whether the parser needs to keep comments
     implicitImports*: seq[string] # modules that are to be implicitly imported
     implicitIncludes*: seq[string] # modules that are to be implicitly included
@@ -246,7 +247,7 @@ type
     compileOptionsCmd*: seq[string]
     linkOptions*: string          # (*)
     compileOptions*: string       # (*)
-    ccompilerpath*: string
+    cCompilerPath*: string
     toCompile*: CfileList         # (*)
     suggestionResultHook*: proc (result: Suggest) {.closure.}
     suggestVersion*: int
@@ -270,12 +271,12 @@ const oldExperimentalFeatures* = {implicitDeref, dotOperators, callOperator, par
 const
   ChecksOptions* = {optObjCheck, optFieldCheck, optRangeCheck, optNilCheck,
     optOverflowCheck, optBoundsCheck, optAssert, optNaNCheck, optInfCheck,
-    optMoveCheck}
+    optStyleCheck, optRefCheck}
 
   DefaultOptions* = {optObjCheck, optFieldCheck, optRangeCheck,
-    optBoundsCheck, optOverflowCheck, optAssert, optWarns,
+    optBoundsCheck, optOverflowCheck, optAssert, optWarns, optRefCheck,
     optHints, optStackTrace, optLineTrace,
-    optTrMacros, optNilCheck, optMoveCheck}
+    optTrMacros, optNilCheck, optStyleCheck}
   DefaultGlobalOptions* = {optThreadAnalysis,
     optExcessiveStackTrace, optListFullPaths}
 
@@ -335,6 +336,7 @@ proc newConfigRef*(): ConfigRef =
     projectMainIdx: FileIndex(0'i32), # the canonical path id of the main module
     command: "", # the main command (e.g. cc, check, scan, etc)
     commandArgs: @[], # any arguments after the main command
+    commandLine: "",
     keepComments: true, # whether the parser needs to keep comments
     implicitImports: @[], # modules that are to be implicitly imported
     implicitIncludes: @[], # modules that are to be implicitly included
@@ -498,7 +500,7 @@ proc setDefaultLibpath*(conf: ConfigRef) =
     # Find out if $nim/../../lib/system.nim exists.
     let parentNimLibPath = realNimPath.parentDir.parentDir / "lib"
     if not fileExists(conf.libpath.string / "system.nim") and
-        fileExists(parentNimlibPath / "system.nim"):
+        fileExists(parentNimLibPath / "system.nim"):
       conf.libpath = AbsoluteDir parentNimLibPath
 
 proc canonicalizePath*(conf: ConfigRef; path: AbsoluteFile): AbsoluteFile =
@@ -590,7 +592,7 @@ proc rawFindFile2(conf: ConfigRef; f: RelativeFile): AbsoluteFile =
     result = it / f
     if fileExists(result):
       # bring to front
-      for j in countDown(i,1):
+      for j in countdown(i, 1):
         swap(conf.lazyPaths[j], conf.lazyPaths[j-1])
 
       return canonicalizePath(conf, result)

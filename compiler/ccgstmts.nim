@@ -15,7 +15,7 @@ const
   stringCaseThreshold = 8
     # above X strings a hash-switch for strings is generated
 
-proc getTraverseProc(p: BProc, v: Psym): Rope =
+proc getTraverseProc(p: BProc, v: PSym): Rope =
   if p.config.selectedGC in {gcMarkAndSweep, gcDestructors, gcV2, gcRefc} and
       optNimV2 notin p.config.globalOptions and
       containsGarbageCollectedRef(v.loc.t):
@@ -690,7 +690,7 @@ proc genRaiseStmt(p: BProc, t: PNode) =
       lineCg(p, cpsStmts, "#raiseExceptionEx((#Exception*)$1, $2, $3, $4, $5);$n",
           [e, makeCString(typ.sym.name.s),
           makeCString(if p.prc != nil: p.prc.name.s else: p.module.module.name.s),
-          makeCString(toFileName(p.config, t.info)), toLinenumber(t.info)])
+          quotedFilename(p.config, t.info), toLinenumber(t.info)])
       if optNimV2 in p.config.globalOptions:
         lineCg(p, cpsStmts, "$1 = NIM_NIL;$n", [e])
   else:

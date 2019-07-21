@@ -108,10 +108,10 @@ elif defined(genode):
 
 else:
   when not (defined(macosx) or defined(haiku)):
-    {.passL: "-pthread".}
+    {.passl: "-pthread".}
 
   when not defined(haiku):
-    {.passC: "-pthread".}
+    {.passc: "-pthread".}
 
   const
     schedh = "#define _GNU_SOURCE\n#include <sched.h>"
@@ -225,7 +225,7 @@ when emulatedThreadVars:
   proc GetThreadLocalVars(): pointer {.compilerRtl, inl.} =
     result = addr(cast[PGcThread](threadVarGetValue(globalsSlot)).tls)
 
-  proc initThreadVarsEmulation() {.compilerProc, inline.} =
+  proc initThreadVarsEmulation() {.compilerproc, inline.} =
     when not defined(useNimRtl):
       globalsSlot = threadVarAlloc()
       when declared(mainThread):

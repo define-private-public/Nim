@@ -13,7 +13,7 @@
 # Todo:
 # - use openArray instead of array to avoid over-specializations
 
-import modulegraphs, lineinfos, idents, ast, astalgo, renderer, semdata,
+import modulegraphs, lineinfos, idents, ast, renderer, semdata,
   sighashes, lowerings, options, types, msgs, magicsys, tables
 
 type
@@ -88,6 +88,11 @@ proc fillBodyObj(c: var TLiftCtx; n, body, x, y: PNode) =
     for t in items(n): fillBodyObj(c, t, body, x, y)
   else:
     illFormedAstLocal(n, c.g.config)
+
+proc fillBodyObjT(c: var TLiftCtx; t: PType, body, x, y: PNode) =
+  if t.len > 0 and t.sons[0] != nil:
+    fillBodyObjT(c, skipTypes(t.sons[0], abstractPtrs), body, x, y)
+  fillBodyObj(c, t.n, body, x, y)
 
 proc genAddr(g: ModuleGraph; x: PNode): PNode =
   if x.kind == nkHiddenDeref:
@@ -287,7 +292,7 @@ proc forallElements(c: var TLiftCtx; t: PType; body, x, y: PNode) =
   let whileLoop = genWhileLoop(c, i, x)
   let elemType = t.lastSon
   fillBody(c, elemType, whileLoop.sons[1], x.at(i, elemType),
-                                              y.at(i, elemType))
+                                           y.at(i, elemType))
   addIncStmt(c, whileLoop.sons[1], i)
   body.add whileLoop
 
@@ -358,7 +363,13 @@ proc weakrefOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
     body.add genIf(c, x, callCodegenProc(c.g, "nimDecWeakRef", c.info, x))
     body.add newAsgnStmt(x, y)
   of attachedDestructor:
-    body.add genIf(c, x, callCodegenProc(c.g, "nimDecWeakRef", c.info, x))
+    # it's better to prepend the destruction of weak refs in order to
+    # prevent wrong "dangling refs exist" problems:
+    let des = genIf(c, x, callCodegenProc(c.g, "nimDecWeakRef", c.info, x))
+    if body.len == 0:
+      body.add des
+    else:
+      body.sons.insert(des, 0)
   of attachedDeepCopy: assert(false, "cannot happen")
 
 proc ownedRefOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
@@ -392,7 +403,8 @@ proc closureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
     call.sons[0] = newSymNode(createMagic(c.g, "deepCopy", mDeepCopy))
     call.sons[1] = y
     body.add newAsgnStmt(x, call)
-  elif optNimV2 in c.g.config.globalOptions:
+  elif optNimV2 in c.g.config.globalOptions and
+      optRefCheck in c.g.config.options:
     let xx = genBuiltin(c.g, mAccessEnv, "accessEnv", x)
     xx.typ = getSysType(c.g, c.info, tyPointer)
     case c.kind
@@ -408,7 +420,11 @@ proc closureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
       body.add genIf(c, xx, callCodegenProc(c.g, "nimDecWeakRef", c.info, xx))
       body.add newAsgnStmt(x, y)
     of attachedDestructor:
-      body.add genIf(c, xx, callCodegenProc(c.g, "nimDecWeakRef", c.info, xx))
+      let des = genIf(c, xx, callCodegenProc(c.g, "nimDecWeakRef", c.info, xx))
+      if body.len == 0:
+        body.add des
+      else:
+        body.sons.insert(des, 0)
     of attachedDeepCopy: assert(false, "cannot happen")
 
 proc ownedClosureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
@@ -433,7 +449,8 @@ proc fillBody(c: var TLiftCtx; t: PType; body, x, y: PNode) =
       tyPtr, tyOpt, tyUncheckedArray:
     defaultOp(c, t, body, x, y)
   of tyRef:
-    if optNimV2 in c.g.config.globalOptions:
+    if optNimV2 in c.g.config.globalOptions and
+        optRefCheck in c.g.config.options:
       weakrefOp(c, t, body, x, y)
     else:
       defaultOp(c, t, body, x, y)
@@ -482,7 +499,7 @@ proc fillBody(c: var TLiftCtx; t: PType; body, x, y: PNode) =
       defaultOp(c, t, body, x, y)
   of tyObject:
     if not considerUserDefinedOp(c, t, body, x, y):
-      fillBodyObj(c, t.n, body, x, y)
+      fillBodyObjT(c, t, body, x, y)
   of tyDistinct:
     if not considerUserDefinedOp(c, t, body, x, y):
       fillBody(c, t.sons[0].skipTypes(skipPtrs), body, x, y)

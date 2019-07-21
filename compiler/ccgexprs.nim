@@ -76,7 +76,7 @@ proc genLiteral(p: BProc, n: PNode, ty: PType): Rope =
       # with the new semantics for 'nil' strings, we can map "" to nil and
       # save tons of allocations:
       if n.strVal.len == 0 and optNilSeqs notin p.options and
-          p.config.selectedGc != gcDestructors:
+          p.config.selectedGC != gcDestructors:
         result = genNilStringLiteral(p.module, n.info)
       else:
         result = genStringLiteral(p.module, n)
@@ -360,7 +360,7 @@ proc genAssignment(p: BProc, dest, src: TLoc, flags: TAssignmentFlags) =
     else:
       linefmt(p, cpsStmts, "$1 = $2;$n", [rdLoc(dest), rdLoc(src)])
   of tyPtr, tyPointer, tyChar, tyBool, tyEnum, tyCString,
-     tyInt..tyUInt64, tyRange, tyVar, tyLent:
+     tyInt..tyUInt64, tyRange, tyVar, tyLent, tyNil:
     linefmt(p, cpsStmts, "$1 = $2;$n", [rdLoc(dest), rdLoc(src)])
   else: internalError(p.config, "genAssignment: " & $ty.kind)
 
@@ -639,28 +639,6 @@ proc genIsNil(p: BProc, e: PNode, d: var TLoc) =
     unaryExpr(p, e, d, "($1 == 0)")
 
 proc unaryArith(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
-  const
-    unArithTab: array[mNot..mToBiggestInt, string] = [
-      "!($1)", # Not
-      "$1",                   # UnaryPlusI
-      "($3)((NU$2) ~($1))",   # BitnotI
-      "$1",                   # UnaryPlusF64
-      "-($1)",                # UnaryMinusF64
-      "($1 < 0? -($1) : ($1))", # AbsF64; BUGFIX: fabs() makes problems
-                                # for Tiny C, so we don't use it
-      "(($3)(NU)(NU8)($1))",  # mZe8ToI
-      "(($3)(NU64)(NU8)($1))", # mZe8ToI64
-      "(($3)(NU)(NU16)($1))", # mZe16ToI
-      "(($3)(NU64)(NU16)($1))", # mZe16ToI64
-      "(($3)(NU64)(NU32)($1))", # mZe32ToI64
-      "(($3)(NU64)(NU)($1))", # mZeIToI64
-      "(($3)(NU8)(NU)($1))", # ToU8
-      "(($3)(NU16)(NU)($1))", # ToU16
-      "(($3)(NU32)(NU64)($1))", # ToU32
-      "((double) ($1))",      # ToFloat
-      "((double) ($1))",      # ToBiggestFloat
-      "float64ToInt32($1)",   # ToInt
-      "float64ToInt64($1)"]   # ToBiggestInt
   var
     a: TLoc
     t: PType
@@ -671,7 +649,6 @@ proc unaryArith(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
   template applyFormat(frmt: untyped) =
     putIntoDest(p, d, e, frmt % [rdLoc(a), rope(getSize(p.config, t) * 8),
                 getSimpleTypeDesc(p.module, e.typ)])
-
   case op
   of mNot:
     applyFormat("!($1)")
@@ -686,24 +663,6 @@ proc unaryArith(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
   of mAbsF64:
     applyFormat("($1 < 0? -($1) : ($1))")
     # BUGFIX: fabs() makes problems for Tiny C
-  of mZe8ToI:
-    applyFormat("(($3)(NU)(NU8)($1))")
-  of mZe8ToI64:
-    applyFormat("(($3)(NU64)(NU8)($1))")
-  of mZe16ToI:
-    applyFormat("(($3)(NU)(NU16)($1))")
-  of mZe16ToI64:
-    applyFormat("(($3)(NU64)(NU16)($1))")
-  of mZe32ToI64:
-    applyFormat("(($3)(NU64)(NU32)($1))")
-  of mZeIToI64:
-    applyFormat("(($3)(NU64)(NU)($1))")
-  of mToU8:
-    applyFormat("(($3)(NU8)(NU)($1))")
-  of mToU16:
-    applyFormat("(($3)(NU16)(NU)($1))")
-  of mToU32:
-    applyFormat("(($3)(NU32)(NU64)($1))")
   of mToFloat:
     applyFormat("((double) ($1))")
   of mToBiggestFloat:
@@ -1106,7 +1065,7 @@ proc gcUsage(conf: ConfigRef; n: PNode) =
   if conf.selectedGC == gcNone: message(conf, n.info, warnGcMem, n.renderTree)
 
 proc strLoc(p: BProc; d: TLoc): Rope =
-  if p.config.selectedGc == gcDestructors:
+  if p.config.selectedGC == gcDestructors:
     result = byRefLoc(p, d)
   else:
     result = rdLoc(d)
@@ -1347,11 +1306,17 @@ proc genNewSeqOfCap(p: BProc; e: PNode; d: var TLoc) =
   let seqtype = skipTypes(e.typ, abstractVarRange)
   var a: TLoc
   initLocExpr(p, e.sons[1], a)
-  putIntoDest(p, d, e, ropecg(p.module,
-              "($1)#nimNewSeqOfCap($2, $3)", [
-              getTypeDesc(p.module, seqtype),
-              genTypeInfo(p.module, seqtype, e.info), a.rdLoc]))
-  gcUsage(p.config, e)
+  if p.config.selectedGC == gcDestructors:
+    if d.k == locNone: getTemp(p, e.typ, d, needsInit=false)
+    linefmt(p, cpsStmts, "$1.len = 0; $1.p = ($4*) #newSeqPayload($2, sizeof($3));$n",
+      [d.rdLoc, a.rdLoc, getTypeDesc(p.module, seqtype.lastSon),
+      getSeqPayloadType(p.module, seqtype)])
+  else:
+    putIntoDest(p, d, e, ropecg(p.module,
+                "($1)#nimNewSeqOfCap($2, $3)", [
+                getTypeDesc(p.module, seqtype),
+                genTypeInfo(p.module, seqtype, e.info), a.rdLoc]))
+    gcUsage(p.config, e)
 
 proc genConstExpr(p: BProc, n: PNode): Rope
 proc handleConstExpr(p: BProc, n: PNode, d: var TLoc): bool =
@@ -1685,11 +1650,14 @@ proc makePtrType(baseType: PType): PType =
   addSonSkipIntLit(result, baseType)
 
 proc makeAddr(n: PNode): PNode =
-  result = newTree(nkHiddenAddr, n)
-  result.typ = makePtrType(n.typ)
+  if n.kind == nkHiddenAddr:
+    result = n
+  else:
+    result = newTree(nkHiddenAddr, n)
+    result.typ = makePtrType(n.typ)
 
 proc genSetLengthSeq(p: BProc, e: PNode, d: var TLoc) =
-  if p.config.selectedGc == gcDestructors:
+  if p.config.selectedGC == gcDestructors:
     e.sons[1] = makeAddr(e[1])
     genCall(p, e, d)
     return
@@ -1718,7 +1686,7 @@ proc genSetLengthSeq(p: BProc, e: PNode, d: var TLoc) =
   gcUsage(p.config, e)
 
 proc genSetLengthStr(p: BProc, e: PNode, d: var TLoc) =
-  if p.config.selectedGc == gcDestructors:
+  if p.config.selectedGC == gcDestructors:
     binaryStmtAddr(p, e, d, "setLengthStrV2")
   else:
     var a, b, call: TLoc
@@ -1932,7 +1900,7 @@ proc genSomeCast(p: BProc, e: PNode, d: var TLoc) =
     if srcTyp.kind in {tyPtr, tyPointer} and etyp.kind in IntegralTypes:
       putIntoDest(p, d, e, "(($1) (ptrdiff_t) ($2))" %
           [getTypeDesc(p.module, e.typ), rdCharLoc(a)], a.storage)
-    elif p.config.selectedGc == gcDestructors and etyp.kind in {tySequence, tyString}:
+    elif p.config.selectedGC == gcDestructors and etyp.kind in {tySequence, tyString}:
       putIntoDest(p, d, e, "(*($1*) (&$2))" %
           [getTypeDesc(p.module, e.typ), rdCharLoc(a)], a.storage)
     else:
@@ -2061,24 +2029,25 @@ proc genMove(p: BProc; n: PNode; d: var TLoc) =
 
 proc genDestroy(p: BProc; n: PNode) =
   if optNimV2 in p.config.globalOptions:
-    let t = n[1].typ.skipTypes(abstractInst)
+    let arg = n[1].skipAddr
+    let t = arg.typ.skipTypes(abstractInst)
     case t.kind
     of tyString:
       var a: TLoc
-      initLocExpr(p, n[1].skipAddr, a)
-      linefmt(p, cpsStmts, "if ($1.len && $1.p->allocator) {$n" &
+      initLocExpr(p, arg, a)
+      linefmt(p, cpsStmts, "if ($1.p && $1.p->allocator) {$n" &
         " $1.p->allocator->dealloc($1.p->allocator, $1.p, $1.p->cap + 1 + sizeof(NI) + sizeof(void*)); }$n",
         [rdLoc(a)])
     of tySequence:
       var a: TLoc
-      initLocExpr(p, n[1].skipAddr, a)
-      linefmt(p, cpsStmts, "if ($1.len && $1.p->allocator) {$n" &
+      initLocExpr(p, arg, a)
+      linefmt(p, cpsStmts, "if ($1.p && $1.p->allocator) {$n" &
         " $1.p->allocator->dealloc($1.p->allocator, $1.p, ($1.p->cap * sizeof($2)) + sizeof(NI) + sizeof(void*)); }$n",
         [rdLoc(a), getTypeDesc(p.module, t.lastSon)])
     else: discard "nothing to do"
   else:
     let t = n[1].typ.skipTypes(abstractVar)
-    if t.destructor != nil and t.destructor.magic != mDestroy:
+    if t.destructor != nil and t.destructor.ast[bodyPos].len != 0:
       internalError(p.config, n.info, "destructor turned out to be not trivial")
     discard "ignore calls to the default destructor"
 
@@ -2165,7 +2134,7 @@ proc genMagicExpr(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
       genAssignment(p, dest, call, {})
   of mAppendStrStr: genStrAppend(p, e, d)
   of mAppendSeqElem:
-    if p.config.selectedGc == gcDestructors:
+    if p.config.selectedGC == gcDestructors:
       e.sons[1] = makeAddr(e[1])
       genCall(p, e, d)
     else:
@@ -2199,6 +2168,22 @@ proc genMagicExpr(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
     if not p.module.compileToCpp:
       p.module.includeHeader("<stdalign.h>")
     putIntoDest(p, d, e, "((NI)alignof($1))" % [getTypeDesc(p.module, t)])
+  of mOffsetOf:
+    var dotExpr: PNode
+    block findDotExpr:
+      if e[1].kind == nkDotExpr:
+        dotExpr = e[1]
+      elif e[1].kind == nkCheckedFieldExpr:
+        dotExpr = e[1][0]
+      else:
+        internalError(p.config, e.info, "unknown ast")
+    let t = dotExpr[0].typ.skipTypes({tyTypeDesc})
+    let member =
+      if t.kind == tyTuple:
+        "Field" & rope(dotExpr[1].sym.position)
+      else:
+        rope(dotExpr[1].sym.name.s)
+    putIntoDest(p,d,e, "((NI)offsetof($1, $2))" % [getTypeDesc(p.module, t), member])
   of mChr: genSomeCast(p, e, d)
   of mOrd: genOrd(p, e, d)
   of mLengthArray, mHigh, mLengthStr, mLengthSeq, mLengthOpenArray:
@@ -2259,8 +2244,11 @@ proc genMagicExpr(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
   of mNLen..mNError, mSlurp..mQuoteAst:
     localError(p.config, e.info, strutils.`%`(errXMustBeCompileTime, e.sons[0].sym.name.s))
   of mSpawn:
-    let n = lowerings.wrapProcForSpawn(p.module.g.graph, p.module.module, e, e.typ, nil, nil)
-    expr(p, n, d)
+    when defined(leanCompiler):
+      quit "compiler built without support for the 'spawn' statement"
+    else:
+      let n = spawn.wrapProcForSpawn(p.module.g.graph, p.module.module, e, e.typ, nil, nil)
+      expr(p, n, d)
   of mParallel:
     when defined(leanCompiler):
       quit "compiler built without support for the 'parallel' statement"
@@ -2700,9 +2688,8 @@ proc expr(p: BProc, n: PNode, d: var TLoc) =
         if ({sfExportc, sfCompilerProc} * prc.flags == {sfExportc}) or
             (sfExportc in prc.flags and lfExportLib in prc.loc.flags) or
             (prc.kind == skMethod):
-          # we have not only the header:
-          if prc.getBody.kind != nkEmpty or lfDynamicLib in prc.loc.flags:
-            genProc(p.module, prc)
+          # Generate proc even if empty body, bugfix #11651.
+          genProc(p.module, prc)
   of nkParForStmt: genParForStmt(p, n)
   of nkState: genState(p, n)
   of nkGotoState:
@@ -2722,9 +2709,14 @@ proc getDefaultValue(p: BProc; typ: PType; info: TLineInfo): Rope =
   of tyBool: result = rope"NIM_FALSE"
   of tyEnum, tyChar, tyInt..tyInt64, tyUInt..tyUInt64: result = rope"0"
   of tyFloat..tyFloat128: result = rope"0.0"
-  of tyCString, tyString, tyVar, tyLent, tyPointer, tyPtr, tySequence, tyUntyped,
+  of tyCString, tyVar, tyLent, tyPointer, tyPtr, tyUntyped,
      tyTyped, tyTypeDesc, tyStatic, tyRef, tyNil:
     result = rope"NIM_NIL"
+  of tyString, tySequence:
+    if p.config.selectedGC == gcDestructors:
+      result = rope"{0, NIM_NIL}"
+    else:
+      result = rope"NIM_NIL"
   of tyProc:
     if t.callConv != ccClosure:
       result = rope"NIM_NIL"
@@ -2748,7 +2740,8 @@ proc getDefaultValue(p: BProc; typ: PType; info: TLineInfo): Rope =
   else:
     globalError(p.config, info, "cannot create null element for: " & $t.kind)
 
-proc getNullValueAux(p: BProc; t: PType; obj, cons: PNode, result: var Rope; count: var int) =
+proc getNullValueAux(p: BProc; t: PType; obj, cons: PNode,
+                     result: var Rope; count: var int) =
   case obj.kind
   of nkRecList:
     for it in obj.sons:
@@ -2774,7 +2767,8 @@ proc getNullValueAux(p: BProc; t: PType; obj, cons: PNode, result: var Rope; cou
   else:
     localError(p.config, cons.info, "cannot create null element for: " & $obj)
 
-proc getNullValueAuxT(p: BProc; orig, t: PType; obj, cons: PNode, result: var Rope; count: var int) =
+proc getNullValueAuxT(p: BProc; orig, t: PType; obj, cons: PNode,
+                      result: var Rope; count: var int) =
   var base = t.sons[0]
   let oldRes = result
   if not p.module.compileToCpp: result.add "{"
@@ -2787,7 +2781,7 @@ proc getNullValueAuxT(p: BProc; orig, t: PType; obj, cons: PNode, result: var Ro
     inc count
   getNullValueAux(p, t, obj, cons, result, count)
   # do not emit '{}' as that is not valid C:
-  if oldcount == count: result = oldres
+  if oldcount == count: result = oldRes
   elif not p.module.compileToCpp: result.add "}"
 
 proc genConstObjConstr(p: BProc; n: PNode): Rope =
@@ -2861,7 +2855,7 @@ proc genConstExpr(p: BProc, n: PNode): Rope =
   of nkBracket, nkPar, nkTupleConstr, nkClosure:
     var t = skipTypes(n.typ, abstractInstOwned)
     if t.kind == tySequence:
-      if p.config.selectedGc == gcDestructors:
+      if p.config.selectedGC == gcDestructors:
         result = genConstSeqV2(p, n, n.typ)
       else:
         result = genConstSeq(p, n, n.typ)
@@ -2885,7 +2879,7 @@ proc genConstExpr(p: BProc, n: PNode): Rope =
   of nkObjConstr:
     result = genConstObjConstr(p, n)
   of nkStrLit..nkTripleStrLit:
-    if p.config.selectedGc == gcDestructors:
+    if p.config.selectedGC == gcDestructors:
       result = genStringLiteralV2Const(p.module, n)
     else:
       var d: TLoc

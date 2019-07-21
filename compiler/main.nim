@@ -13,21 +13,18 @@ when not defined(nimcore):
   {.error: "nimcore MUST be defined for Nim's core tooling".}
 
 import
-  llstream, strutils, ast, astalgo, lexer, syntaxes, renderer, options, msgs,
-  os, condsyms, times,
-  wordrecg, sem, semdata, idents, passes, extccomp,
+  llstream, strutils, ast, lexer, syntaxes, options, msgs,
+  condsyms, times,
+  sem, idents, passes, extccomp,
   cgen, json, nversion,
-  platform, nimconf, importer, passaux, depends, vm, vmdef, types, idgen,
-  parser, modules, ccgutils, sigmatch, ropes,
+  platform, nimconf, passaux, depends, vm, idgen,
+  parser, modules,
   modulegraphs, tables, rod, lineinfos, pathutils
 
 when not defined(leanCompiler):
   import jsgen, docgen, docgen2
 
 from magicsys import resetSysTypes
-
-proc codegenPass(g: ModuleGraph) =
-  registerPass g, cgenPass
 
 proc semanticPasses(g: ModuleGraph) =
   registerPass g, verbosePass
@@ -86,6 +83,15 @@ proc commandCompileToC(graph: ModuleGraph) =
   extccomp.initVars(conf)
   semanticPasses(graph)
   registerPass(graph, cgenPass)
+
+  if {optRun, optForceFullMake} * conf.globalOptions == {optRun} or isDefined(conf, "nimBetterRun"):
+    let proj = changeFileExt(conf.projectFull, "")
+    if not changeDetectedViaJsonBuildInstructions(conf, proj):
+      # nothing changed
+      # Little hack here in order to not lose our precious
+      # hintSuccessX message:
+      conf.notes.incl hintSuccessX
+      return
 
   compileProject(graph)
   if graph.config.errorCounter > 0:

@@ -10,8 +10,8 @@
 ## This module implements the symbol importing mechanism.
 
 import
-  intsets, strutils, os, ast, astalgo, msgs, options, idents, lookups,
-  semdata, passes, renderer, modulepaths, sigmatch, lineinfos
+  intsets, ast, astalgo, msgs, options, idents, lookups,
+  semdata, modulepaths, sigmatch, lineinfos
 
 proc readExceptSet*(c: PContext, n: PNode): IntSet =
   assert n.kind in {nkImportExceptStmt, nkExportExceptStmt}
@@ -79,19 +79,19 @@ proc importSymbol(c: PContext, n: PNode, fromMod: PSym) =
   else:
     when false:
       if s.kind == skStub: loadStub(s)
-    if s.kind notin ExportableSymKinds:
-      internalError(c.config, n.info, "importSymbol: 2")
+    let multiImport = s.kind notin ExportableSymKinds or s.kind in skProcKinds
     # for an enumeration we have to add all identifiers
-    case s.kind
-    of skProcKinds:
+    if multiImport:
       # for a overloadable syms add all overloaded routines
       var it: TIdentIter
       var e = initIdentIter(it, fromMod.tab, s.name)
       while e != nil:
         if e.name.id != s.name.id: internalError(c.config, n.info, "importSymbol: 3")
-        rawImportSymbol(c, e)
+        if s.kind in ExportableSymKinds:
+          rawImportSymbol(c, e)
         e = nextIdentIter(it, fromMod.tab)
-    else: rawImportSymbol(c, s)
+    else:
+      rawImportSymbol(c, s)
     suggestSym(c.config, n.info, s, c.graph.usageSym, false)
 
 proc importAllSymbolsExcept(c: PContext, fromMod: PSym, exceptSet: IntSet) =
@@ -129,6 +129,7 @@ proc importForwarded(c: PContext, n: PNode, exceptSet: IntSet) =
 
 proc importModuleAs(c: PContext; n: PNode, realModule: PSym): PSym =
   result = realModule
+  c.unusedImports.add((realModule, n.info))
   if n.kind != nkImportAs: discard
   elif n.len != 2 or n.sons[1].kind != nkIdent:
     localError(c.config, n.info, "module alias must be an identifier")
@@ -139,7 +140,7 @@ proc importModuleAs(c: PContext; n: PNode, realModule: PSym): PSym =
 
 proc myImportModule(c: PContext, n: PNode; importStmtResult: PNode): PSym =
   let f = checkModuleName(c.config, n)
-  if f != InvalidFileIDX:
+  if f != InvalidFileIdx:
     let L = c.graph.importStack.len
     let recursion = c.graph.importStack.find(f)
     c.graph.importStack.add f

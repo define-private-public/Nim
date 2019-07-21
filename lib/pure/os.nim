@@ -934,13 +934,13 @@ when defined(windows) and not weirdTarget:
     template getCommandLine(): untyped = getCommandLineW()
 
     template getFilename(f: untyped): untyped =
-      $cast[WideCString](addr(f.cFilename[0]))
+      $cast[WideCString](addr(f.cFileName[0]))
   else:
     template findFirstFile(a, b: untyped): untyped = findFirstFileA(a, b)
     template findNextFile(a, b: untyped): untyped = findNextFileA(a, b)
     template getCommandLine(): untyped = getCommandLineA()
 
-    template getFilename(f: untyped): untyped = $f.cFilename
+    template getFilename(f: untyped): untyped = $f.cFileName
 
   proc skipFindData(f: WIN32_FIND_DATA): bool {.inline.} =
     # Note - takes advantage of null delimiter in the cstring
@@ -1035,7 +1035,7 @@ const
     when defined(windows): ["exe", "cmd", "bat"] else: [""]
 
 proc findExe*(exe: string, followSymlinks: bool = true;
-              extensions: openarray[string]=ExeExts): string {.
+              extensions: openArray[string]=ExeExts): string {.
   tags: [ReadDirEffect, ReadEnvEffect, ReadIOEffect], noNimScript.} =
   ## Searches for `exe` in the current working directory and then
   ## in directories listed in the ``PATH`` environment variable.
@@ -1492,7 +1492,7 @@ proc setFilePermissions*(filename: string, permissions: set[FilePermission]) {.
     if fpOthersWrite in permissions: p = p or S_IWOTH
     if fpOthersExec in permissions: p = p or S_IXOTH
 
-    if chmod(filename, p) != 0: raiseOSError(osLastError())
+    if chmod(filename, cast[Mode](p)) != 0: raiseOSError(osLastError())
   else:
     when useWinUnicode:
       wrapUnary(res, getFileAttributesW, filename)
@@ -1849,7 +1849,7 @@ proc expandFilename*(filename: string): string {.rtl, extern: "nos$1",
           break
     # getFullPathName doesn't do case corrections, so we have to use this convoluted
     # way of retrieving the true filename
-    for x in walkFiles(result.string):
+    for x in walkFiles(result):
       result = x
     if not existsFile(result) and not existsDir(result):
       raise newException(OSError, "file '" & result & "' does not exist")
@@ -2867,7 +2867,7 @@ template rawToFormalFileInfo(rawInfo, path, formalInfo): untyped =
         formalInfo.permissions.incl(formalMode)
     formalInfo.id = (rawInfo.st_dev, rawInfo.st_ino)
     formalInfo.size = rawInfo.st_size
-    formalInfo.linkCount = rawInfo.st_Nlink.BiggestInt
+    formalInfo.linkCount = rawInfo.st_nlink.BiggestInt
     formalInfo.lastAccessTime = rawInfo.st_atim.toTime
     formalInfo.lastWriteTime = rawInfo.st_mtim.toTime
     formalInfo.creationTime = rawInfo.st_ctim.toTime

@@ -77,12 +77,12 @@ proc isPureObject*(typ: PType): bool =
     t = t.sons[0].skipTypes(skipPtrs)
   result = t.sym != nil and sfPure in t.sym.flags
 
-proc getOrdValue*(n: PNode): BiggestInt =
+proc getOrdValue*(n: PNode; onError = high(BiggestInt)): BiggestInt =
   case n.kind
   of nkCharLit..nkUInt64Lit: n.intVal
   of nkNilLit: 0
-  of nkHiddenStdConv: getOrdValue(n.sons[1])
-  else: high(BiggestInt)
+  of nkHiddenStdConv: getOrdValue(n.sons[1], onError)
+  else: onError
 
 proc getFloatValue*(n: PNode): BiggestFloat =
   case n.kind
@@ -168,7 +168,7 @@ proc iterOverTypeAux(marker: var IntSet, t: PType, iter: TTypeIter,
       for i in 0 ..< sonsLen(t):
         result = iterOverTypeAux(marker, t.sons[i], iter, closure)
         if result: return
-      if t.n != nil: result = iterOverNode(marker, t.n, iter, closure)
+      if t.n != nil and t.kind != tyProc: result = iterOverNode(marker, t.n, iter, closure)
 
 proc iterOverType(t: PType, iter: TTypeIter, closure: RootRef): bool =
   var marker = initIntSet()
@@ -760,7 +760,9 @@ proc floatRangeCheck*(x: BiggestFloat, t: PType): bool =
 
 proc lengthOrd*(conf: ConfigRef; t: PType): BiggestInt =
   case t.skipTypes(tyUserTypeClasses).kind
-  of tyInt64, tyInt32, tyInt: result = lastOrd(conf, t)
+  of tyInt64, tyInt32, tyInt:
+    # XXX: this is just wrong
+    result = lastOrd(conf, t)
   of tyDistinct: result = lengthOrd(conf, t.sons[0])
   else:
     let last = lastOrd(conf, t)

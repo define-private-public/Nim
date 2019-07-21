@@ -1283,6 +1283,39 @@ Arrays are always bounds checked (statically or at runtime). These
 checks can be disabled via pragmas or invoking the compiler with the
 ``--boundChecks:off`` command line switch.
 
+An array constructor can have explicit indexes for readability:
+
+.. code-block:: nim
+
+  type
+    Values = enum
+      valA, valB, valC
+
+  const
+    lookupTable = [
+      valA: "A",
+      valB: "B",
+      valC: "C"
+    ]
+
+If an index is left out, ``succ(lastIndex)`` is used as the index
+value:
+
+.. code-block:: nim
+
+  type
+    Values = enum
+      valA, valB, valC, valD, valE
+
+  const
+    lookupTable = [
+      valA: "A",
+      "B",
+      valC: "C",
+      "D", "e"
+    ]
+
+
 
 Open arrays
 -----------
@@ -1667,7 +1700,39 @@ To deal with untraced memory, the procedures ``alloc``, ``dealloc`` and
 ``realloc`` can be used. The documentation of the system module contains
 further information.
 
-If a reference points to *nothing*, it has the value ``nil``.
+
+Nil
+---
+
+If a reference points to *nothing*, it has the value ``nil``. ``nil`` is also
+the default value for all ``ref`` and ``ptr`` types. Dereferencing ``nil``
+is an unrecoverable fatal runtime error. A dereferencing operation ``p[]``
+implies that ``p`` is not nil. This can be exploited by the implementation to
+optimize code like:
+
+
+.. code-block:: nim
+
+  p[].field = 3
+  if p != nil:
+    # if p were nil, ``p[]`` would have caused a crash already,
+    # so we know ``p`` is always not nil here.
+    action()
+
+Into:
+
+.. code-block:: nim
+
+  p[].field = 3
+  action()
+
+
+*Note*: This is not comparable to C's "undefined behavior" for
+dereferencing NULL pointers.
+
+
+Mixing GC'ed memory with ``ptr``
+--------------------------------
 
 Special care has to be taken if an untraced object contains traced objects like
 traced references, strings or sequences: in order to free everything properly,
@@ -3023,6 +3088,21 @@ As seen in the above example, the case expression can also introduce side
 effects. When multiple statements are given for a branch, Nim will use
 the last expression as the result value.
 
+Block expression
+----------------
+
+A `block expression` is almost like a block statement, but it is an expression
+that uses last expression under the block as the value.
+It is similar to the statement list expression, but the statement list expression
+does not open new block scope.
+
+.. code-block:: nim
+  let a = block:
+    var fib = @[0, 1]
+    for i in 0..10:
+      fib.add fib[^1] + fib[^2]
+    fib
+
 Table constructor
 -----------------
 
@@ -3061,6 +3141,16 @@ results in an exception (if it cannot be determined statically).
 Ordinary procs are often preferred over type conversions in Nim: For instance,
 ``$`` is the ``toString`` operator by convention and ``toFloat`` and ``toInt``
 can be used to convert from floating point to integer or vice versa.
+
+A type conversion can also be used to disambiguate overloaded routines:
+
+.. code-block:: nim
+
+  proc p(x: int) = echo "int"
+  proc p(x: string) = echo "string"
+
+  let procVar = (proc(x: string))(p)
+  procVar("a")
 
 
 Type casts
@@ -3297,6 +3387,25 @@ different; for this a special setter syntax is needed:
   var s: Socket
   new s
   s.host = 34  # same as `host=`(s, 34)
+
+A proc defined as ``f=`` (with the trailing ``=``) is called
+a `setter`:idx:. A setter can be called explicitly via the common
+backticks notation:
+
+.. code-block:: nim
+
+  proc `f=`(x: MyObject; value: string) =
+    discard
+
+  `f=`(myObject, "value")
+
+
+``f=`` can be called implicitly in the pattern
+``x.f = value`` if and only if the type of ``x`` does not have a field
+named ``f`` or if ``f`` is not visible in the current module. These rules
+ensure that object fields and accessors can have the same name. Within the
+module ``x.f`` is then always interpreted as field access and outside the
+module it is interpreted as an accessor proc call.
 
 
 Command invocation syntax
@@ -5040,57 +5149,6 @@ Currently for loop macros must be enabled explicitly
 via ``{.experimental: "forLoopMacros".}``.
 
 
-Case statement macros
----------------------
-
-A macro that needs to be called `match`:idx: can be used to rewrite
-``case`` statements in order to implement `pattern matching`:idx: for
-certain types. The following example implements a simplistic form of
-pattern matching for tuples, leveraging the existing equality operator
-for tuples (as provided in ``system.==``):
-
-.. code-block:: nim
-    :test: "nim c $1"
-
-  {.experimental: "caseStmtMacros".}
-
-  import macros
-
-  macro match(n: tuple): untyped =
-    result = newTree(nnkIfStmt)
-    let selector = n[0]
-    for i in 1 ..< n.len:
-      let it = n[i]
-      case it.kind
-      of nnkElse, nnkElifBranch, nnkElifExpr, nnkElseExpr:
-        result.add it
-      of nnkOfBranch:
-        for j in 0..it.len-2:
-          let cond = newCall("==", selector, it[j])
-          result.add newTree(nnkElifBranch, cond, it[^1])
-      else:
-        error "'match' cannot handle this node", it
-    echo repr result
-
-  case ("foo", 78)
-  of ("foo", 78): echo "yes"
-  of ("bar", 88): echo "no"
-  else: discard
-
-
-Currently case statement macros must be enabled explicitly
-via ``{.experimental: "caseStmtMacros".}``.
-
-``match`` macros are subject to overload resolution. First the
-``case``'s selector expression is used to determine which ``match``
-macro to call. To this macro is then passed the complete ``case``
-statement body and the macro is evaluated.
-
-In other words, the macro needs to transform the full ``case`` statement
-but only the statement's selector expression is used to determine which
-macro to call.
-
-
 Special Types
 =============
 
@@ -6290,7 +6348,7 @@ prefixes ``/*TYPESECTION*/`` or ``/*VARSECTION*/`` or ``/*INCLUDESECTION*/``:
 ImportCpp pragma
 ----------------
 
-**Note**: `c2nim <https://nim-lang.org/docs/c2nim.html>`_ can parse a large subset of C++ and knows
+**Note**: `c2nim <https://github.com/nim-lang/c2nim/blob/master/doc/c2nim.rst>`_ can parse a large subset of C++ and knows
 about the ``importcpp`` pragma pattern language. It is not necessary
 to know all the details described here.
 

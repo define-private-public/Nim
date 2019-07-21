@@ -189,16 +189,16 @@ proc semTry(c: PContext, n: PNode; flags: TExprFlags): PNode =
   template semExceptBranchType(typeNode: PNode): bool =
     # returns true if exception type is imported type
     let typ = semTypeNode(c, typeNode, nil).toObject()
-    var is_imported = false
+    var isImported = false
     if isImportedException(typ, c.config):
-      is_imported = true
+      isImported = true
     elif not isException(typ):
       localError(c.config, typeNode.info, errExprCannotBeRaised)
 
     if containsOrIncl(check, typ.id):
       localError(c.config, typeNode.info, errExceptionAlreadyHandled)
     typeNode = newNodeIT(nkType, typeNode.info, typ)
-    is_imported
+    isImported
 
   result = n
   inc c.p.inTryStmt
@@ -223,9 +223,9 @@ proc semTry(c: PContext, n: PNode; flags: TExprFlags): PNode =
 
       if a.len == 2 and a[0].isInfixAs():
         # support ``except Exception as ex: body``
-        let is_imported = semExceptBranchType(a[0][1])
+        let isImported = semExceptBranchType(a[0][1])
         let symbol = newSymG(skLet, a[0][2], c)
-        symbol.typ = if is_imported: a[0][1].typ
+        symbol.typ = if isImported: a[0][1].typ
                      else: a[0][1].typ.toRef()
         addDecl(c, symbol)
         # Overwrite symbol in AST with the symbol in the symbol table.
@@ -241,13 +241,13 @@ proc semTry(c: PContext, n: PNode; flags: TExprFlags): PNode =
           # if ``except: body`` already encountered,
           # cannot be followed by a ``except KeyError, ... : body`` block
           inc catchAllExcepts
-        var is_native, is_imported: bool
+        var isNative, isImported: bool
         for j in 0..a.len-2:
           let tmp = semExceptBranchType(a[j])
-          if tmp: is_imported = true
-          else: is_native = true
+          if tmp: isImported = true
+          else: isNative = true
 
-        if is_native and is_imported:
+        if isNative and isImported:
           localError(c.config, a[0].info, "Mix of imported and native exception types is not allowed in one except branch")
 
     elif a.kind == nkFinally:
@@ -320,6 +320,7 @@ proc semIdentDef(c: PContext, n: PNode, kind: TSymKind): PSym =
     result = semIdentWithPragma(c, kind, n, {})
     if result.owner.kind == skModule:
       incl(result.flags, sfGlobal)
+  result.options = c.config.options
 
   proc getLineInfo(n: PNode): TLineInfo =
     case n.kind
@@ -333,7 +334,7 @@ proc semIdentDef(c: PContext, n: PNode, kind: TSymKind): PSym =
   suggestSym(c.config, info, result, c.graph.usageSym)
 
 proc checkNilable(c: PContext; v: PSym) =
-  if {sfGlobal, sfImportC} * v.flags == {sfGlobal} and
+  if {sfGlobal, sfImportc} * v.flags == {sfGlobal} and
       {tfNotNil, tfNeedsInit} * v.typ.flags != {}:
     if v.astdef.isNil:
       message(c.config, v.info, warnProveInit, v.name.s)
@@ -427,8 +428,8 @@ proc fillPartialObject(c: PContext; n: PNode; typ: PType) =
 proc setVarType(c: PContext; v: PSym, typ: PType) =
   if v.typ != nil and not sameTypeOrNil(v.typ, typ):
     localError(c.config, v.info, "inconsistent typing for reintroduced symbol '" &
-        v.name.s & "': previous type was: " & typeToString(v.typ) &
-        "; new type is: " & typeToString(typ))
+        v.name.s & "': previous type was: " & typeToString(v.typ, preferDesc) &
+        "; new type is: " & typeToString(typ, preferDesc))
   v.typ = typ
 
 proc semVarOrLet(c: PContext, n: PNode, symkind: TSymKind): PNode =
@@ -811,7 +812,7 @@ proc handleCaseStmtMacro(c: PContext; n: PNode): PNode =
                            errors, false)
   if r.state == csMatch:
     var match = r.calleeSym
-    markUsed(c.config, n[0].info, match, c.graph.usageSym)
+    markUsed(c, n[0].info, match, c.graph.usageSym)
     onUse(n[0].info, match)
 
     # but pass 'n' to the 'match' macro, not 'n[0]':
@@ -877,7 +878,7 @@ proc semCase(c: PContext, n: PNode; flags: TExprFlags): PNode =
   pushCaseContext(c, n)
   n.sons[0] = semExprWithType(c, n.sons[0])
   var chckCovered = false
-  var covered: BiggestInt = 0
+  var covered: Int128 = toInt128(0)
   var typ = commonTypeBegin
   var hasElse = false
   let caseTyp = skipTypes(n.sons[0].typ, abstractVar-{tyTypeDesc})
@@ -891,10 +892,12 @@ proc semCase(c: PContext, n: PNode; flags: TExprFlags): PNode =
   of tyFloat..tyFloat128, tyString, tyError:
     discard
   else:
+    popCaseContext(c)
+    closeScope(c)
     if caseStmtMacros in c.features:
       result = handleCaseStmtMacro(c, n)
-      if result != nil: return result
-
+      if result != nil:
+        return result
     localError(c.config, n.sons[0].info, errSelectorMustBeOfCertainTypes)
     return
   for i in 1 ..< sonsLen(n):
@@ -1007,7 +1010,6 @@ proc typeSectionLeftSidePass(c: PContext, n: PNode) =
         let typsym = pkg.tab.strTableGet(typName)
         if typsym.isNil:
           s = semIdentDef(c, name[1], skType)
-          styleCheckDef(c.config, s)
           onDef(name[1].info, s)
           s.typ = newTypeS(tyObject, c)
           s.typ.sym = s
@@ -1022,7 +1024,6 @@ proc typeSectionLeftSidePass(c: PContext, n: PNode) =
           s = typsym
     else:
       s = semIdentDef(c, name, skType)
-      styleCheckDef(c.config, s)
       onDef(name.info, s)
       s.typ = newTypeS(tyForward, c)
       s.typ.sym = s             # process pragmas:
@@ -1251,6 +1252,8 @@ proc typeSectionFinalPass(c: PContext, n: PNode) =
     if a.kind == nkCommentStmt: continue
     let name = typeSectionTypeName(c, a.sons[0])
     var s = name.sym
+    # check the style here after the pragmas have been processed:
+    styleCheckDef(c.config, s)
     # compute the type's size and check for illegal recursions:
     if a.sons[1].kind == nkEmpty:
       var x = a[2]
@@ -1284,9 +1287,9 @@ proc semAllTypeSections(c: PContext; n: PNode): PNode =
     of nkIncludeStmt:
       for i in 0..<n.len:
         var f = checkModuleName(c.config, n.sons[i])
-        if f != InvalidFileIDX:
+        if f != InvalidFileIdx:
           if containsOrIncl(c.includedFiles, f.int):
-            localError(c.config, n.info, errRecursiveDependencyX % toFilename(c.config, f))
+            localError(c.config, n.info, errRecursiveDependencyX % toMsgFilename(c.config, f))
           else:
             let code = c.graph.includeFileCallback(c.graph, c.module, f)
             gatherStmts c, code, result
@@ -1861,7 +1864,7 @@ proc semProcAux(c: PContext, n: PNode, kind: TSymKind,
         " operator has to be enabled with {.experimental: \"callOperator\".}")
 
   if n.sons[bodyPos].kind != nkEmpty and sfError notin s.flags:
-    # for DLL generation it is annoying to check for sfImportc!
+    # for DLL generation we allow sfImportc to have a body, for use in VM
     if sfBorrow in s.flags:
       localError(c.config, n.sons[bodyPos].info, errImplOfXNotAllowed % s.name.s)
     let usePseudoGenerics = kind in {skMacro, skTemplate}
@@ -1879,12 +1882,11 @@ proc semProcAux(c: PContext, n: PNode, kind: TSymKind,
 
         c.p.wasForwarded = proto != nil
         maybeAddResult(c, s, n)
-        if lfDynamicLib notin s.loc.flags:
-          # no semantic checking for importc:
-          s.ast[bodyPos] = hloBody(c, semProcBody(c, n.sons[bodyPos]))
-          # unfortunately we cannot skip this step when in 'system.compiles'
-          # context as it may even be evaluated in 'system.compiles':
-          trackProc(c, s, s.ast[bodyPos])
+        # semantic checking also needed with importc in case used in VM
+        s.ast[bodyPos] = hloBody(c, semProcBody(c, n.sons[bodyPos]))
+        # unfortunately we cannot skip this step when in 'system.compiles'
+        # context as it may even be evaluated in 'system.compiles':
+        trackProc(c, s, s.ast[bodyPos])
         if s.kind == skMethod: semMethodPrototype(c, s, n)
       else:
         if (s.typ.sons[0] != nil and kind != skIterator) or kind == skMacro:
@@ -1897,8 +1899,9 @@ proc semProcAux(c: PContext, n: PNode, kind: TSymKind,
           fixupInstantiatedSymbols(c, s)
         if s.kind == skMethod: semMethodPrototype(c, s, n)
       if sfImportc in s.flags:
-        # so we just ignore the body after semantic checking for importc:
-        n.sons[bodyPos] = c.graph.emptyNode
+        # don't ignore the body in case used in VM
+        # n.sons[bodyPos] = c.graph.emptyNode
+        discard
       popProcCon(c)
   else:
     if s.kind == skMethod: semMethodPrototype(c, s, n)
@@ -2019,9 +2022,9 @@ proc semMacroDef(c: PContext, n: PNode): PNode =
 
 proc incMod(c: PContext, n: PNode, it: PNode, includeStmtResult: PNode) =
   var f = checkModuleName(c.config, it)
-  if f != InvalidFileIDX:
+  if f != InvalidFileIdx:
     if containsOrIncl(c.includedFiles, f.int):
-      localError(c.config, n.info, errRecursiveDependencyX % toFilename(c.config, f))
+      localError(c.config, n.info, errRecursiveDependencyX % toMsgFilename(c.config, f))
     else:
       addSon(includeStmtResult, semStmt(c, c.graph.includeFileCallback(c.graph, c.module, f), {}))
       excl(c.includedFiles, f.int)

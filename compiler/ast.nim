@@ -10,8 +10,7 @@
 # abstract syntax tree + symbol table
 
 import
-  lineinfos, hashes, nversion, options, strutils, std / sha1, ropes, idents,
-  intsets, idgen
+  lineinfos, hashes, options, ropes, idents, idgen
 
 type
   TCallingConvention* = enum
@@ -279,6 +278,8 @@ type
     sfNonReloadable   # symbol will be left as-is when hot code reloading is on -
                       # meaning that it won't be renamed and/or changed in any way
     sfGeneratedOp     # proc is a generated '='; do not inject destructors in it
+                      # variable is generated closure environment; requires early
+                      # destruction for --newruntime.
 
 
   TSymFlags* = set[TSymFlag]
@@ -619,10 +620,6 @@ type
     mUnaryMinusI, mUnaryMinusI64, mAbsI, mNot,
     mUnaryPlusI, mBitnotI,
     mUnaryPlusF64, mUnaryMinusF64, mAbsF64,
-    mZe8ToI, mZe8ToI64,
-    mZe16ToI, mZe16ToI64,
-    mZe32ToI64, mZeIToI64,
-    mToU8, mToU16, mToU32,
     mToFloat, mToBiggestFloat,
     mToInt, mToBiggestInt,
     mCharToStr, mBoolToStr, mIntToStr, mInt64ToStr, mFloatToStr, mCStrToStr,
@@ -693,10 +690,6 @@ const
     mEqRef, mEqProc, mEqUntracedRef, mLePtr, mLtPtr, mEqCString, mXor,
     mUnaryMinusI, mUnaryMinusI64, mAbsI, mNot, mUnaryPlusI, mBitnotI,
     mUnaryPlusF64, mUnaryMinusF64, mAbsF64,
-    mZe8ToI, mZe8ToI64,
-    mZe16ToI, mZe16ToI64,
-    mZe32ToI64, mZeIToI64,
-    mToU8, mToU16, mToU32,
     mToFloat, mToBiggestFloat,
     mToInt, mToBiggestInt,
     mCharToStr, mBoolToStr, mIntToStr, mInt64ToStr, mFloatToStr, mCStrToStr,

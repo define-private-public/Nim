@@ -499,7 +499,7 @@ type
     filename*: string
     line*,column*: int
 
-proc `$`*(arg: Lineinfo): string =
+proc `$`*(arg: LineInfo): string =
   # BUG: without `result = `, gives compile error
   result = arg.filename & "(" & $arg.line & ", " & $arg.column & ")"
 
@@ -748,17 +748,17 @@ proc newLit*[N,T](arg: array[N,T]): NimNode {.compileTime.} =
     result.add newLit(x)
 
 proc newLit*[T](arg: seq[T]): NimNode {.compileTime.} =
-  var bracket = nnkBracket.newTree
+  let bracket = nnkBracket.newTree
   for x in arg:
     bracket.add newLit(x)
-
-  result = nnkCall.newTree(
-    nnkBracketExpr.newTree(
-      nnkAccQuoted.newTree( bindSym"@" ),
-      getTypeInst( bindSym"T" )
-    ),
+  result = nnkPrefix.newTree(
+    bindSym"@",
     bracket
   )
+  if arg.len == 0:
+    # add type cast for empty seq
+    var typ = getTypeInst(typeof(arg))[1]
+    result = newCall(typ,result)
 
 proc newLit*[T](s: set[T]): NimNode {.compileTime.} =
   result = nnkCurly.newTree
@@ -988,16 +988,16 @@ proc newBlockStmt*(label, body: NimNode): NimNode {.compileTime.} =
   ## Create a new block statement with label
   return newNimNode(nnkBlockStmt).add(label, body)
 
-proc newBlockStmt*(body: NimNode): NimNode {.compiletime.} =
+proc newBlockStmt*(body: NimNode): NimNode {.compileTime.} =
   ## Create a new block: stmt
   return newNimNode(nnkBlockStmt).add(newEmptyNode(), body)
 
-proc newVarStmt*(name, value: NimNode): NimNode {.compiletime.} =
+proc newVarStmt*(name, value: NimNode): NimNode {.compileTime.} =
   ## Create a new var stmt
   return newNimNode(nnkVarSection).add(
     newNimNode(nnkIdentDefs).add(name, newNimNode(nnkEmpty), value))
 
-proc newLetStmt*(name, value: NimNode): NimNode {.compiletime.} =
+proc newLetStmt*(name, value: NimNode): NimNode {.compileTime.} =
   ## Create a new let stmt
   return newNimNode(nnkLetSection).add(
     newNimNode(nnkIdentDefs).add(name, newNimNode(nnkEmpty), value))
@@ -1095,7 +1095,7 @@ proc newProc*(name = newEmptyNode();
     body)
 
 proc newIfStmt*(branches: varargs[tuple[cond, body: NimNode]]):
-                NimNode {.compiletime.} =
+                NimNode {.compileTime.} =
   ## Constructor for ``if`` statements.
   ##
   ## .. code-block:: nim
@@ -1233,7 +1233,7 @@ proc `body=`*(someProc: NimNode, val: NimNode) {.compileTime.} =
   else:
     badNodeKind someProc, "body="
 
-proc basename*(a: NimNode): NimNode {.compiletime, benign.}
+proc basename*(a: NimNode): NimNode {.compileTime, benign.}
 
 proc `$`*(node: NimNode): string {.compileTime.} =
   ## Get the string of an identifier node
@@ -1396,7 +1396,7 @@ else:
     else:
       result = false
 
-proc hasArgOfName*(params: NimNode; name: string): bool {.compiletime.}=
+proc hasArgOfName*(params: NimNode; name: string): bool {.compileTime.}=
   ## Search nnkFormalParams for an argument.
   expectKind(params, nnkFormalParams)
   for i in 1 ..< params.len:
@@ -1404,7 +1404,7 @@ proc hasArgOfName*(params: NimNode; name: string): bool {.compiletime.}=
     if name.eqIdent( $ node[0]):
       return true
 
-proc addIdentIfAbsent*(dest: NimNode, ident: string) {.compiletime.} =
+proc addIdentIfAbsent*(dest: NimNode, ident: string) {.compileTime.} =
   ## Add ident to dest if it is not present. This is intended for use
   ## with pragmas.
   for node in dest.children:
@@ -1420,7 +1420,7 @@ proc boolVal*(n: NimNode): bool {.compileTime, noSideEffect.} =
   if n.kind == nnkIntLit: n.intVal != 0
   else: n == bindSym"true" # hacky solution for now
 
-macro expandMacros*(body: typed): typed =
+macro expandMacros*(body: typed): untyped =
   ## Expands one level of macro - useful for debugging.
   ## Can be used to inspect what happens when a macro call is expanded,
   ## without altering its result.

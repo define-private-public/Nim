@@ -13,7 +13,7 @@
 import ast except getstr
 
 import
-  strutils, astalgo, msgs, vmdef, vmgen, nimsets, types, passes,
+  strutils, msgs, vmdef, vmgen, nimsets, types, passes,
   parser, vmdeps, idents, trees, renderer, options, transf, parseutils,
   vmmarshal, gorgeimpl, lineinfos, tables, btrees, macrocacheimpl,
   modulegraphs, sighashes
@@ -1082,12 +1082,15 @@ proc rawExecute(c: PCtx, start: int, tos: PStackFrame): TFullReg =
           VmArgs(ra: ra, rb: rb, rc: rc, slots: cast[pointer](regs),
                  currentException: c.currentExceptionA,
                  currentLineInfo: c.debug[pc]))
-      elif sfImportc in prc.flags:
+      elif importcCond(prc):
         if compiletimeFFI notin c.config.features:
           globalError(c.config, c.debug[pc], "VM not allowed to do FFI, see `compiletimeFFI`")
         # we pass 'tos.slots' instead of 'regs' so that the compiler can keep
         # 'regs' in a register:
         when hasFFI:
+          if prc.position - 1 < 0:
+            globalError(c.config, c.debug[pc],
+              "VM call invalid: prc.position: " & $prc.position)
           let prcValue = c.globals.sons[prc.position-1]
           if prcValue.kind == nkEmpty:
             globalError(c.config, c.debug[pc], "cannot run " & prc.name.s)
@@ -1905,16 +1908,6 @@ proc rawExecute(c: PCtx, start: int, tos: PStackFrame): TFullReg =
       when not defined(nimNoNilSeqs):
         if regs[ra].node.strVal.isNil: regs[ra].node.strVal = newStringOfCap(1000)
       storeAny(regs[ra].node.strVal, typ, regs[rb].regToNode, c.config)
-    of opcToNarrowInt:
-      decodeBC(rkInt)
-      let mask = (1'i64 shl rc) - 1 # 0xFF
-      let signbit = 1'i64 shl (rc - 1) # 0x80
-      let toggle = mask - signbit # 0x7F
-      # algorithm: -((i8 and 0xFF) xor 0x7F) + 0x7F
-      # mask off higher bits.
-      # uses two's complement to sign-extend integer.
-      # reajust integer into desired range.
-      regs[ra].intVal = -((regs[rb].intVal and mask) xor toggle) + toggle
 
     inc pc
 
@@ -2068,13 +2061,21 @@ iterator genericParamsInMacroCall*(macroSym: PSym, call: PNode): (PSym, PNode) =
   for i in 0 ..< gp.len:
     let genericParam = gp[i].sym
     let posInCall = macroSym.typ.len + i
-    yield (genericParam, call[posInCall])
+    if posInCall < call.len:
+      yield (genericParam, call[posInCall])
 
 # to prevent endless recursion in macro instantiation
 const evalMacroLimit = 1000
 
+proc errorNode(owner: PSym, n: PNode): PNode =
+  result = newNodeI(nkEmpty, n.info)
+  result.typ = newType(tyError, owner)
+  result.typ.flags.incl tfCheckedForDestructor
+
 proc evalMacroCall*(module: PSym; g: ModuleGraph;
                     n, nOrig: PNode, sym: PSym): PNode =
+  if g.config.errorCounter > 0: return errorNode(module, n)
+
   # XXX globalError() is ugly here, but I don't know a better solution for now
   inc(g.config.evalMacroCounter)
   if g.config.evalMacroCounter > evalMacroLimit:

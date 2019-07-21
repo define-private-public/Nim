@@ -11,8 +11,8 @@
 # and evaluation phase
 
 import
-  strutils, options, ast, astalgo, trees, treetab, nimsets,
-  nversion, platform, math, msgs, os, condsyms, idents, renderer, types,
+  strutils, options, ast, trees, nimsets,
+  platform, math, msgs, idents, renderer, types,
   commands, magicsys, modulegraphs, strtabs, lineinfos
 
 proc newIntNodeT*(intVal: BiggestInt, n: PNode; g: ModuleGraph): PNode =
@@ -157,7 +157,7 @@ proc makeRange(typ: PType, first, last: BiggestInt; g: ModuleGraph): PType =
   let lowerNode = newIntNode(nkIntLit, minA)
   if typ.kind == tyInt and minA == maxA:
     result = getIntLitType(g, lowerNode)
-  elif typ.kind in {tyUint, tyUInt64}:
+  elif typ.kind in {tyUInt, tyUInt64}:
     # these are not ordinal types, so you get no subrange type for these:
     result = typ
   else:
@@ -187,7 +187,7 @@ proc fitLiteral(c: ConfigRef, n: PNode): PNode =
   result = n
 
   let typ = n.typ.skipTypes(abstractRange)
-  if typ.kind in tyUInt..tyUint32:
+  if typ.kind in tyUInt..tyUInt32:
     result.intVal = result.intVal and lastOrd(c, typ, fixedUnsigned=true)
 
 proc evalOp(m: TMagic, n, a, b, c: PNode; g: ModuleGraph): PNode =
@@ -219,12 +219,6 @@ proc evalOp(m: TMagic, n, a, b, c: PNode; g: ModuleGraph): PNode =
   of mToInt, mToBiggestInt: result = newIntNodeT(system.toInt(getFloat(a)), n, g)
   of mAbsF64: result = newFloatNodeT(abs(getFloat(a)), n, g)
   of mAbsI: result = foldAbs(getInt(a), n, g)
-  of mZe8ToI, mZe8ToI64, mZe16ToI, mZe16ToI64, mZe32ToI64, mZeIToI64:
-    # byte(-128) = 1...1..1000_0000'64 --> 0...0..1000_0000'64
-    result = newIntNodeT(getInt(a) and (`shl`(1, getSize(g.config, a.typ) * 8) - 1), n, g)
-  of mToU8: result = newIntNodeT(getInt(a) and 0x000000FF, n, g)
-  of mToU16: result = newIntNodeT(getInt(a) and 0x0000FFFF, n, g)
-  of mToU32: result = newIntNodeT(getInt(a) and 0x00000000FFFFFFFF'i64, n, g)
   of mUnaryLt: result = doAndFit(foldSub(getOrdValue(a), 1, n, g))
   of mSucc: result = doAndFit(foldAdd(getOrdValue(a), getInt(b), n, g))
   of mPred: result = doAndFit(foldSub(getOrdValue(a), getInt(b), n, g))
@@ -437,7 +431,7 @@ proc foldConv(n, a: PNode; g: ModuleGraph; check = false): PNode =
 
   # XXX range checks?
   case dstTyp.kind
-  of tyInt..tyInt64, tyUint..tyUInt64:
+  of tyInt..tyInt64, tyUInt..tyUInt64:
     case srcTyp.kind
     of tyFloat..tyFloat64:
       result = newIntNodeT(int(getFloat(a)), n, g)
@@ -447,7 +441,7 @@ proc foldConv(n, a: PNode; g: ModuleGraph; check = false): PNode =
       let toSigned = dstTyp.kind in tyInt..tyInt64
       var val = a.getOrdValue
 
-      if dstTyp.kind in {tyInt, tyInt64, tyUint, tyUInt64}:
+      if dstTyp.kind in {tyInt, tyInt64, tyUInt, tyUInt64}:
         # No narrowing needed
         discard
       elif dstTyp.kind in {tyInt..tyInt64}:
@@ -654,13 +648,11 @@ proc getConstExpr(m: PSym, n: PNode; g: ModuleGraph): PNode =
         # This fixes bug #544.
         result = newIntNodeT(lengthOrd(g.config, n.sons[1].typ), n, g)
       of mSizeOf:
-        let size = getSize(g.config, n[1].typ)
-        if size >= 0:
-          result = newIntNode(nkIntLit, size)
-          result.info = n.info
-          result.typ = getSysType(g, n.info, tyInt)
-        else:
-          result = nil
+        result = foldSizeOf(g.config, n, nil)
+      of mAlignOf:
+        result = foldAlignOf(g.config, n, nil)
+      of mOffsetOf:
+        result = foldOffsetOf(g.config, n, nil)
       of mAstToStr:
         result = newStrNodeT(renderTree(n[1], {renderNoComments}), n, g)
       of mConStrStr:

@@ -200,8 +200,9 @@ proc semConstructFields(c: PContext, recNode: PNode,
       fieldsPresentInInitExpr(c, fields, initExpr)
 
     template checkMissingFields(branchNode: PNode) =
-      let fields = branchNode[branchNode.len - 1]
-      checkForMissingFields(c, fields, initExpr)
+      if branchNode != nil:
+        let fields = branchNode[branchNode.len - 1]
+        checkForMissingFields(c, fields, initExpr)
 
     let discriminator = recNode.sons[0]
     internalAssert c.config, discriminator.kind == nkSym
@@ -352,6 +353,9 @@ proc semObjConstr(c: PContext, n: PNode, flags: TExprFlags): PNode =
     t = skipTypes(t.sons[0], {tyGenericInst, tyAlias, tySink, tyOwned})
     if optNimV2 in c.config.globalOptions:
       result.typ = makeVarType(c, result.typ, tyOwned)
+      # we have to watch out, there are also 'owned proc' types that can be used
+      # multiple times as long as they don't have closures.
+      result.typ.flags.incl tfHasOwned
   if t.kind != tyObject:
     localError(c.config, n.info, errGenerated, "object constructor needs an object type")
     return

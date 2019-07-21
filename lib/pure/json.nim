@@ -142,8 +142,8 @@ runnableExamples:
   doAssert $(%* Foo()) == """{"a1":0,"a2":0,"a0":0,"a3":0,"a4":0}"""
 
 import
-  hashes, tables, strutils, lexbase, streams, unicode, macros, parsejson,
-  typetraits, options
+  hashes, tables, strutils, lexbase, streams, macros, parsejson,
+  options
 
 export
   tables.`$`
@@ -324,7 +324,7 @@ proc `%`*(b: bool): JsonNode =
 
 proc `%`*(keyVals: openArray[tuple[key: string, val: JsonNode]]): JsonNode =
   ## Generic constructor for JSON data. Creates a new `JObject JsonNode`
-  if keyvals.len == 0: return newJArray()
+  if keyVals.len == 0: return newJArray()
   result = newJObject()
   for key, val in items(keyVals): result.fields[key] = val
 
@@ -380,7 +380,7 @@ proc `%`*(o: enum): JsonNode =
   ## string. Creates a new ``JString JsonNode``.
   result = %($o)
 
-proc toJson(x: NimNode): NimNode {.compiletime.} =
+proc toJson(x: NimNode): NimNode {.compileTime.} =
   case x.kind
   of nnkBracket: # array
     if x.len == 0: return newCall(bindSym"newJArray")
@@ -778,6 +778,12 @@ iterator pairs*(node: JsonNode): tuple[key: string, val: JsonNode] =
   assert node.kind == JObject
   for key, val in pairs(node.fields):
     yield (key, val)
+
+iterator keys*(node: JsonNode): string =
+  ## Iterator for the keys in `node`. `node` has to be a JObject.
+  assert node.kind == JObject
+  for key in node.fields.keys:
+    yield key
 
 iterator mpairs*(node: var JsonNode): tuple[key: string, val: var JsonNode] =
   ## Iterator for the child elements of `node`. `node` has to be a JObject.

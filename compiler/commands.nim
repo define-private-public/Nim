@@ -17,6 +17,7 @@ template bootSwitch(name, expr, userString) =
   const name = if expr: " " & userString else: ""
 
 bootSwitch(usedRelease, defined(release), "-d:release")
+bootSwitch(usedDanger, defined(danger), "-d:danger")
 bootSwitch(usedGnuReadline, defined(useLinenoise), "-d:useLinenoise")
 bootSwitch(usedBoehm, defined(boehmgc), "--gc:boehm")
 bootSwitch(usedMarkAndSweep, defined(gcmarkandsweep), "--gc:markAndSweep")
@@ -26,7 +27,7 @@ bootSwitch(usedNoGC, defined(nogc), "--gc:none")
 
 import
   os, msgs, options, nversion, condsyms, strutils, extccomp, platform,
-  wordrecg, parseutils, nimblecmd, idents, parseopt, sequtils, lineinfos,
+  wordrecg, parseutils, nimblecmd, parseopt, sequtils, lineinfos,
   pathutils, strtabs
 
 # but some have deps to imported modules. Yay.
@@ -96,7 +97,7 @@ proc writeVersionInfo(conf: ConfigRef; pass: TCmdLinePass) =
     when gitHash.len == 40:
       msgWriteln(conf, "git hash: " & gitHash, {msgStdout})
 
-    msgWriteln(conf, "active boot switches:" & usedRelease &
+    msgWriteln(conf, "active boot switches:" & usedRelease & usedDanger &
       usedTinyC & usedGnuReadline & usedNativeStacktrace &
       usedFFI & usedBoehm & usedMarkAndSweep & usedGenerational & usedGoGC & usedNoGC,
                {msgStdout})
@@ -275,8 +276,9 @@ proc testCompileOption*(conf: ConfigRef; switch: string, info: TLineInfo): bool 
   of "fieldchecks": result = contains(conf.options, optFieldCheck)
   of "rangechecks": result = contains(conf.options, optRangeCheck)
   of "boundchecks": result = contains(conf.options, optBoundsCheck)
+  of "refchecks": result = contains(conf.options, optRefCheck)
   of "overflowchecks": result = contains(conf.options, optOverflowCheck)
-  of "movechecks": result = contains(conf.options, optMoveCheck)
+  of "stylechecks": result = contains(conf.options, optStyleCheck)
   of "linedir": result = contains(conf.options, optLineDir)
   of "assertions", "a": result = contains(conf.options, optAssert)
   of "run", "r": result = contains(conf.globalOptions, optRun)
@@ -529,8 +531,9 @@ proc processSwitch*(switch, arg: string, pass: TCmdLinePass, info: TLineInfo;
   of "fieldchecks": processOnOffSwitch(conf, {optFieldCheck}, arg, pass, info)
   of "rangechecks": processOnOffSwitch(conf, {optRangeCheck}, arg, pass, info)
   of "boundchecks": processOnOffSwitch(conf, {optBoundsCheck}, arg, pass, info)
+  of "refchecks": processOnOffSwitch(conf, {optRefCheck}, arg, pass, info)
   of "overflowchecks": processOnOffSwitch(conf, {optOverflowCheck}, arg, pass, info)
-  of "movechecks": processOnOffSwitch(conf, {optMoveCheck}, arg, pass, info)
+  of "stylechecks": processOnOffSwitch(conf, {optStyleCheck}, arg, pass, info)
   of "linedir": processOnOffSwitch(conf, {optLineDir}, arg, pass, info)
   of "assertions", "a": processOnOffSwitch(conf, {optAssert}, arg, pass, info)
   of "deadcodeelim": discard # deprecated, dead code elim always on
@@ -783,7 +786,7 @@ proc processSwitch*(switch, arg: string, pass: TCmdLinePass, info: TLineInfo;
     if strutils.find(switch, '.') >= 0: options.setConfigVar(conf, switch, arg)
     else: invalidCmdLineOption(conf, pass, switch, info)
 
-template gCmdLineInfo*(): untyped = newLineInfo(config, AbsoluteFile"command line", 1, 1)
+template gCmdLineInfo*(): untyped = newLineInfo(commandLineIdx, 1, 1)
 
 proc processCommand*(switch: string, pass: TCmdLinePass; config: ConfigRef) =
   var cmd, arg: string
@@ -806,7 +809,7 @@ proc processArgument*(pass: TCmdLinePass; p: OptParser;
                       argsCount: var int; config: ConfigRef): bool =
   if argsCount == 0:
     # nim filename.nims  is the same as "nim e filename.nims":
-    if p.key.endswith(".nims"):
+    if p.key.endsWith(".nims"):
       config.command = "e"
       incl(config.globalOptions, optWasNimscript)
       config.projectName = unixToNativePath(p.key)

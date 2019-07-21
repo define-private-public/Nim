@@ -1,5 +1,5 @@
 discard """
-  cmd: '''nim c --newruntime $file'''
+  cmd: '''nim cpp --newruntime $file'''
   output: '''(field: "value")
 3 3  new: 0'''
 """
@@ -19,6 +19,26 @@ proc main =
   echo w["key"][]
 
 main()
+
+# bug #11745
+
+type
+  Foo = object
+    bar: seq[int]
+
+var x = [Foo()]
+
+# bug #11563
+type
+  MyTypeType = enum
+    Zero, One
+  MyType = object
+    case kind: MyTypeType
+    of Zero:
+      s*: seq[MyType]
+    of One:
+      x*: int
+var t: MyType
 
 let (a, d) = allocCounters()
 discard cprintf("%ld %ld  new: %ld\n", a, d, allocs)

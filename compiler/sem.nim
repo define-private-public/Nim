@@ -10,13 +10,13 @@
 # This module implements the semantic checking pass.
 
 import
-  ast, strutils, hashes, options, lexer, astalgo, trees, treetab,
-  wordrecg, ropes, msgs, os, condsyms, idents, renderer, types, platform, math,
-  magicsys, parser, nversion, nimsets, semfold, modulepaths, importer,
+  ast, strutils, options, astalgo, trees,
+  wordrecg, ropes, msgs, idents, renderer, types, platform, math,
+  magicsys, nversion, nimsets, semfold, modulepaths, importer,
   procfind, lookups, pragmas, passes, semdata, semtypinst, sigmatch,
   intsets, transf, vmdef, vm, idgen, aliases, cgmeth, lambdalifting,
   evaltempl, patterns, parampatterns, sempass2, linter, semmacrosanity,
-  lowerings, pluginsupport, plugins/active, rod, lineinfos, strtabs
+  lowerings, plugins/active, rod, lineinfos, strtabs, int128
 
 from modulegraphs import ModuleGraph, PPassContext, onUse, onDef, onDefResolveForward
 
@@ -24,7 +24,7 @@ when defined(nimfix):
   import nimfix/prettybase
 
 when not defined(leanCompiler):
-  import semparallel
+  import spawn, semparallel
 
 # implementation
 
@@ -450,7 +450,7 @@ proc semMacroExpr(c: PContext, n, nOrig: PNode, sym: PSym,
   pushInfoContext(c.config, nOrig.info, sym.detailedInfo)
 
   let info = getCallLineInfo(n)
-  markUsed(c.config, info, sym, c.graph.usageSym)
+  markUsed(c, info, sym, c.graph.usageSym)
   onUse(info, sym)
   if sym == c.p.owner:
     globalError(c.config, info, "recursive dependency: '$1'" % sym.name.s)
@@ -618,12 +618,17 @@ proc myProcess(context: PPassContext, n: PNode): PNode =
       #if c.config.cmd == cmdIdeTools: findSuggest(c, n)
   rod.storeNode(c.graph, c.module, result)
 
+proc reportUnusedModules(c: PContext) =
+  for i in 0..high(c.unusedImports):
+    message(c.config, c.unusedImports[i][1], warnUnusedImportX, c.unusedImports[i][0].name.s)
+
 proc myClose(graph: ModuleGraph; context: PPassContext, n: PNode): PNode =
   var c = PContext(context)
   if c.config.cmd == cmdIdeTools and not c.suggestionsMade:
     suggestSentinel(c)
   closeScope(c)         # close module's scope
   rawCloseScope(c)      # imported symbols; don't check for unused ones!
+  reportUnusedModules(c)
   result = newNode(nkStmtList)
   if n != nil:
     internalError(c.config, n.info, "n is not nil") #result := n;
